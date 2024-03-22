@@ -1,0 +1,28 @@
+# TrashCan 1.0 — YOLO Dataset Configuration
+# Dataset: https://conservancy.umn.edu/items/431d7b20-e2f9-4fea-9eca-1c2e7c03fcc4
+# Paper: TrashCan: A Semantically-Segmented Dataset towards Visual Detection of Marine Debris
+
+path: ../data/trashcan_yolo   # root dataset directory
+train: images/train
+val: images/val
+test: images/test
+
+# Number of classes
+nc: 3
+
+# Class names — simplified macro-categories
+# trash: all plastic/debris/waste items
+# bio:   marine life (fish, crab, eel, starfish, etc.)
+# rov:   remotely operated vehicle parts in frame
+names:
+  0: trash
+  1: bio
+  2: rov
+
+# Fine-grained class mapping (TrashCan original → our 3 macro-classes)
+# trash (0): plastic_bag, plastic_bottle, milk_jug, paper_bag, cup, container,
+#            bottle_cap, net, pipe, plastic_tray, rubber_glove, unknown_instance,
+#            unlabeled_trash, styrofoam
+# bio   (1): fish, eel, crab, starfish, nudibranch, coral, shell, lobster,
+#            octopus, sea_cucumber, shrimp
+# rov   (2): rov

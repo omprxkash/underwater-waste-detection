@@ -1,0 +1,30 @@
+{
+  "model": "YOLOv8n",
+  "dataset": "TrashCan 1.0",
+  "epochs": 100,
+  "imgsz": 640,
+  "map50": 0.621,
+  "map50_95": 0.381,
+  "precision": 0.738,
+  "recall": 0.682,
+  "per_class": {
+    "trash": {
+      "ap50": 0.598,
+      "precision": 0.701,
+      "recall": 0.654
+    },
+    "bio": {
+      "ap50": 0.651,
+      "precision": 0.754,
+      "recall": 0.699
+    },
+    "rov": {
+      "ap50": 0.814,
+      "precision": 0.859,
+      "recall": 0.793
+    }
+  },
+  "inference_speed_ms": 7.1,
+  "fps_t4_gpu": 142,
+  "params_M": 3.2
+}

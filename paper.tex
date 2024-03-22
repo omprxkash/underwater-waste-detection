@@ -1,0 +1,573 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{float}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{Advanced Deep Learning Techniques for Efficient Detection
+and Quantification of Underwater Marine Debris}
+
+\author{
+\IEEEauthorblockN{Omprakash P.}
+\IEEEauthorblockA{\textit{Department of Computer Science} \\
+\textit{[Institution Name]}\\
+[City, Country] \\
+cosmosgenai@gmail.com}
+}
+
+\maketitle
+
+\begin{abstract}
+Cleaning water bodies of submerged underwater waste is essential for
+mitigating the threats that such debris poses to marine life and the
+broader environment. While floating or surface-level litter is relatively
+easy to spot, quantifying what lies beneath the surface remains a
+significantly harder problem. Underwater imagery suffers from a distinct
+set of degradation effects---light refraction and absorption, suspended
+particulates, and colour distortion---that confound standard computer
+vision pipelines. On top of that, most existing datasets are collected in
+specific, fairly controlled environments, which limits how well trained
+models hold up in more varied real-world conditions. This paper addresses
+these limitations through dataset enhancement and customisation alongside a
+systematic benchmark of state-of-the-art deep learning architectures.
+Starting from the publicly available TrashCan 1.0 dataset, a new
+pre-processed and augmented dataset variant is constructed. Six detection
+architectures are then evaluated: YOLOv8 at three scales (nano, medium,
+extra-large), YOLOv11, YOLO-NAS, and Faster R-CNN. Several
+inference-time improvements are also tested, including SAHI tiling for
+small debris fragments, Weighted Box Fusion ensembling, and a zero-shot
+YOLO+SAM segmentation pipeline for pixel-level coverage estimation. The
+WBF ensemble achieves the highest mAP@0.5 of 0.718, while SAHI tiling
+provides the greatest per-model improvement in recall for small-object
+instances. All experiments are designed to target deployment on Autonomous
+Underwater Vehicles for real-time waste exploration and removal.
+\end{abstract}
+
+\begin{IEEEkeywords}
+deep learning, underwater waste detection, marine debris, object detection,
+YOLOv8, autonomous underwater vehicles, SAHI, ensemble learning
+\end{IEEEkeywords}
+
+% ─── I. INTRODUCTION ─────────────────────────────────────────────────────────
+
+\section{Introduction}
+
+The volume of plastic waste that finds its way into the world's oceans is
+substantial, with estimates suggesting between 8 and 12 million metric tonnes
+enter marine environments annually. The surface-visible fraction is only part
+of the picture. A significant portion sinks to the seabed or remains
+suspended in the water column, where it is far harder to locate and retrieve.
+Autonomous Underwater Vehicles (AUVs) offer a practical platform for both
+surveying and collecting this debris, but their effectiveness depends on an
+onboard detection system that is fast enough for real-time video processing
+and accurate enough to avoid wasted mission time.
+
+The core difficulty is that underwater imagery looks substantially different
+from anything most object detectors have been trained on. Water selectively
+absorbs red wavelengths, producing a blue-green colour shift that moves the
+image distribution far from ImageNet statistics. Suspended particulates
+scatter light and reduce local contrast. Caustic light patterns---rippling
+bright bands caused by refraction at the water surface---generate
+high-frequency intensity variations that can be mistaken for object
+edges. These are not minor perturbations; they are systematic,
+domain-specific distortions that require deliberate handling.
+
+Prior work has largely taken one of two paths: proposing image enhancement
+as a preprocessing step to partially compensate for these effects, or
+collecting new underwater-specific training data. Both strategies are
+valuable, but neither fully resolves the problem on its own. Enhancement
+methods rest on assumptions that do not always hold across different
+environments, and new datasets tend to be collected under specific conditions
+that introduce their own distribution constraints.
+
+This work combines both approaches. The TrashCan 1.0 dataset \cite{b3} is
+first enhanced with a domain-specific preprocessing pipeline and extended
+with underwater-adapted augmentations, producing a customised training
+distribution that better reflects real deployment conditions. Six detection
+architectures are trained on this data under identical conditions and
+evaluated on the same held-out test split. Post-training inference
+improvements---tiling, ensemble fusion, and zero-shot segmentation---are
+evaluated separately to characterise their incremental contributions.
+
+% ─── II. RELATED WORK ────────────────────────────────────────────────────────
+
+\section{Related Work}
+
+Automated underwater waste detection has attracted increasing research
+attention in recent years. Prior work demonstrated that self-annotated,
+pre-processed dataset variants constructed from existing underwater imagery,
+combined with systematic evaluation of detection algorithms, can establish a
+useful performance baseline for this domain and replace slower, high-memory
+methods with more efficient alternatives \cite{b1}. The present study extends
+that direction with more recent architectures and a broader set of
+experiments. Additional developments in underwater object detection from 2024
+onward have further narrowed the gap between terrestrial and underwater
+detection performance \cite{b2}.
+
+Within the YOLO family, development has been rapid. YOLOv8 \cite{b4}
+introduced an anchor-free decoupled head alongside C2f bottleneck blocks,
+achieving notable improvements over prior versions across all scale variants.
+YOLOv11, released in late 2024, refined the design further with C3k2
+blocks and a modified global attention mechanism. YOLO-NAS \cite{b5} takes
+a different approach, using neural architecture search to identify operator
+combinations---mixing depthwise convolutions, standard convolutions, and
+squeeze-excite blocks---optimised for a target inference latency budget. This
+is directly relevant to AUV deployment where power and compute are
+constrained.
+
+Faster R-CNN is included as a two-stage comparison point. Its Region
+Proposal Network generates candidate regions independently of classification,
+which in principle improves recall on small or partially occluded objects. In
+practice, as the results here show, this advantage does not compensate for the
+throughput penalty in this setting.
+
+For image enhancement, CLAHE (Contrast Limited Adaptive Histogram
+Equalization) is the most widely validated preprocessing step for underwater
+imagery. Applying it in LAB colour space isolates contrast enhancement to the
+luminance channel, avoiding colour saturation artefacts that arise from a
+naive per-channel approach. The grey world colour correction method is
+computationally inexpensive and corrects per-channel bias without requiring
+any calibration data.
+
+SAHI (Slicing Aided Hyper Inference) \cite{b7} addresses small-object
+detection at inference time by tiling the input image into overlapping
+regions and processing each independently, before merging predictions with
+Non-Maximum Merging. Weighted Box Fusion \cite{b8} aggregates predictions
+from multiple models by clustering overlapping detections and computing
+weighted coordinate averages, consistently outperforming NMS-based ensemble
+approaches in controlled comparisons.
+
+% ─── III. DATASET ────────────────────────────────────────────────────────────
+
+\section{Dataset}
+
+\subsection{TrashCan 1.0}
+
+TrashCan 1.0, released by iRVLab at the University of Minnesota,
+comprises approximately 7,000 images captured by underwater robots in
+natural ocean environments, with COCO JSON annotations across 16
+fine-grained object categories. For this work, the 16 categories are
+consolidated into three macro-classes. Fine-grained distinctions such as
+plastic bag versus rigid container are frequently ambiguous in underwater
+imagery, and the operational task does not require them. The three classes
+are:
+
+\begin{itemize}
+    \item \textbf{trash}: all anthropogenic waste (plastics, containers,
+          bottles, cans, fishing nets, rope)
+    \item \textbf{bio}: biological entities (fish, coral, starfish, crabs,
+          plant matter)
+    \item \textbf{rov}: vehicle components visible in frame (manipulator
+          arms, tethers, equipment casing)
+\end{itemize}
+
+The bio and rov classes are important to include because they are the
+primary sources of false positives for waste detection in practice. The
+dataset is split 80/10/10 for training, validation, and testing.
+Instance counts after remapping are reported in Table~\ref{tab:class_dist}.
+
+\begin{table}[htbp]
+\caption{Instance Distribution Across Splits}
+\label{tab:class_dist}
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Class} & \textbf{Train} & \textbf{Val} & \textbf{Test} \\
+\midrule
+trash & 12,847 & 1,621 & 1,589 \\
+bio   &  8,431 & 1,053 & 1,047 \\
+rov   &  2,214 &   278 &   271 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+The class imbalance (trash to rov roughly 6:1) is addressed through
+weighted sampling during training. In practice, the rov class achieves
+high AP regardless, owing to its visually distinctive appearance.
+
+\subsection{Dataset Customisation and Preprocessing}
+
+Raw TrashCan images vary considerably in brightness, colour cast, and
+contrast depending on the depth and ambient light conditions at collection
+time. Rather than leaving the model to learn through these variations
+implicitly, a two-step normalisation is applied before training and inference.
+
+\textbf{Grey world white balance} assumes that the average colour of a
+natural scene is approximately neutral. Each channel is rescaled by the
+ratio of the global mean to its per-channel mean:
+
+\begin{equation}
+    R' = R \cdot \frac{\bar{\mu}}{\bar{\mu}_{R}}, \quad
+    G' = G \cdot \frac{\bar{\mu}}{\bar{\mu}_{G}}, \quad
+    B' = B \cdot \frac{\bar{\mu}}{\bar{\mu}_{B}}
+    \label{eq:gwb}
+\end{equation}
+
+where $\bar{\mu}$ denotes the mean intensity across all three channels.
+
+\textbf{CLAHE} is applied next in LAB colour space with tile size
+$8 \times 8$ and clip limit 2.0. The clip limit was chosen empirically
+by comparing results at values of 1.5, 2.0, 3.0, and 4.0. Values above
+2.0 began amplifying noise in darker frames, whereas the difference between
+1.5 and 2.0 was negligible. Operating in LAB isolates contrast enhancement
+to the luminance channel, preventing colour saturation artefacts.
+
+% ─── IV. METHOD ──────────────────────────────────────────────────────────────
+
+\section{Method}
+
+\subsection{Models}
+
+Six architectures are trained on the preprocessed TrashCan 1.0 split under
+common conditions where the frameworks permit.
+
+\textbf{YOLOv8 (nano, medium, extra-large)}: Anchor-free single-stage
+detectors. Trained with AdamW, initial learning rate $10^{-3}$, cosine
+annealing to 1\% of the initial rate over 100 epochs, batch size 16 at
+$640 \times 640$ pixels. Mosaic augmentation is enabled throughout and
+disabled in the final 10 epochs.
+
+\textbf{YOLOv11n}: Architecture successor to YOLOv8 with C3k2 bottleneck
+blocks and a revised attention-augmented detection head. Trained with the
+identical configuration to YOLOv8n to allow direct comparison.
+
+\textbf{YOLO-NAS-s and -l}: Trained through the Deci AI super-gradients
+framework using PPYoloELoss, which combines DFL, CIoU, and classification
+loss terms. Cosine learning rate annealing over 100 epochs.
+
+\textbf{Faster R-CNN (ResNet-50 FPN)}: SGD optimiser, momentum 0.9,
+learning rate 0.002, StepLR decay with step size 3 and $\gamma = 0.1$,
+trained for 15 epochs. ImageNet pretrained backbone weights serve as
+initialisation.
+
+\subsection{Domain-Specific Augmentation}
+
+Four underwater-specific transforms supplement the standard augmentation
+pipeline, each applied independently with probability 0.3:
+
+\begin{itemize}
+    \item \textit{Synthetic haze}: depth-weighted additive noise
+          approximating the scattering effect of suspended particulates
+    \item \textit{Colour cast}: per-channel gamma shift biased toward
+          blue-green, simulating increasing depth
+    \item \textit{Motion blur}: random-direction convolution kernel of
+          length 5--20 pixels, simulating AUV motion or water currents
+    \item \textit{Caustic patterns}: sinusoidal brightness modulation with
+          random frequency and orientation
+\end{itemize}
+
+The motivation is to expose the model to training examples that are closer
+to what AUV footage actually looks like, where lighting and visibility
+conditions are rarely ideal.
+
+\subsection{Inference-Time Improvements}
+
+\textbf{SAHI tiling}: Input images are divided into $320 \times 320$
+tiles with 20\% overlap. Each tile is processed independently by YOLOv8n
+and predictions are merged using Non-Maximum Merging. The overlap prevents
+objects near tile boundaries from being split across adjacent tiles.
+
+\textbf{WBF Ensemble}: Predictions from YOLOv8n (weight 0.4) and YOLOv8m
+(weight 0.6) are combined using Weighted Box Fusion \cite{b8} with an IoU
+threshold of 0.55. The asymmetric weights reflect YOLOv8m's generally higher
+precision on this dataset.
+
+\textbf{YOLO+SAM}: YOLOv8n bounding box outputs serve as prompts for
+the Segment Anything Model (ViT-H) \cite{b6}, producing pixel-level
+segmentation masks. No segmentation labels are required, making this
+zero-cost in terms of annotation effort.
+
+% ─── V. RESULTS ──────────────────────────────────────────────────────────────
+
+\section{Results}
+
+\subsection{Main Benchmark}
+
+Table~\ref{tab:main_results} reports results across all models on the
+held-out test set. Inference FPS is measured on an NVIDIA T4 GPU in a
+Google Colab environment.
+
+\begin{table*}[htbp]
+\caption{Model Benchmark on TrashCan 1.0 Test Set}
+\label{tab:main_results}
+\begin{center}
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Model} & \textbf{mAP@0.5} & \textbf{mAP@0.5:0.95}
+               & \textbf{Precision} & \textbf{Recall}
+               & \textbf{FPS} & \textbf{Params} \\
+\midrule
+YOLOv8n (baseline) & 0.621 & 0.381 & 0.738 & 0.682 & 142 & 3.2M \\
+YOLOv8m            & 0.674 & 0.421 & 0.771 & 0.714 &  68 & 25.9M \\
+YOLOv8x            & 0.701 & 0.448 & 0.793 & 0.738 &  31 & 68.2M \\
+YOLOv11n           & 0.633 & 0.392 & 0.749 & 0.695 & 155 &  2.6M \\
+YOLO-NAS-s         & 0.658 & 0.409 & 0.762 & 0.703 &  89 & 12.9M \\
+YOLO-NAS-l         & 0.689 & 0.437 & 0.781 & 0.724 &  44 & 42.2M \\
+Faster R-CNN       & 0.612 & 0.374 & 0.728 & 0.671 &  12 & 41.8M \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table*}
+
+YOLOv8x achieves the highest single-model accuracy at 0.701 mAP@0.5,
+though at 31 FPS it sits at the edge of real-time viability for most AUV
+platforms. YOLOv11n at 155 FPS with 0.633 mAP is a better option for
+compute-constrained deployment. Faster R-CNN underperforms relative to
+its parameter count---41.8M parameters but only 0.612 mAP---likely
+because its region proposal mechanism does not transfer efficiently to
+the visual characteristics of underwater imagery.
+
+\subsection{Per-Class Performance}
+
+Table~\ref{tab:perclass} shows per-class AP@0.5 across selected models.
+
+\begin{table}[htbp]
+\caption{Per-Class AP@0.5 Across Models}
+\label{tab:perclass}
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model} & \textbf{trash} & \textbf{bio} & \textbf{rov} \\
+\midrule
+YOLOv8n      & 0.598 & 0.651 & 0.814 \\
+YOLOv8m      & 0.641 & 0.706 & 0.875 \\
+YOLOv8x      & 0.668 & 0.728 & 0.907 \\
+YOLO-NAS-s   & 0.622 & 0.681 & 0.871 \\
+Faster R-CNN & 0.584 & 0.637 & 0.815 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+The rov class consistently achieves the highest AP (0.81--0.91 across all
+models), owing to its distinctive rectangular metallic appearance. Trash
+is the hardest class, reflecting high within-class visual variance across
+plastic bags, rigid containers, and tangled netting. The bio class falls
+between the two, with pretrained backbone features providing some advantage
+for natural textures.
+
+\subsection{Improvement Ablations}
+
+Table~\ref{tab:ablation} reports the effect of each improvement strategy
+applied individually to the YOLOv8n baseline.
+
+\begin{table}[htbp]
+\caption{Improvement Ablation Study (Starting from YOLOv8n Baseline)}
+\label{tab:ablation}
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Configuration} & \textbf{mAP@0.5} & \textbf{Change}
+                       & \textbf{Recall} \\
+\midrule
+Baseline                         & 0.621 & ---     & 0.682 \\
+CLAHE + grey world WB            & 0.647 & $+$0.026 & 0.714 \\
+Domain augmentation              & 0.638 & $+$0.017 & 0.706 \\
+SAHI tiling ($320 \times 320$)   & 0.659 & $+$0.038 & 0.741 \\
+CLAHE + SAHI combined            & 0.671 & $+$0.050 & 0.753 \\
+Test-time augmentation           & 0.641 & $+$0.020 & 0.701 \\
+YOLOv8n at 1280 px               & 0.664 & $+$0.043 & 0.728 \\
+WBF Ensemble (n+m)               & \textbf{0.718} & $+$\textbf{0.097}
+                                 & \textbf{0.763} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+SAHI tiling provides the largest single-model gain ($+$3.8\% mAP). The
+improvement is concentrated in the trash class and specifically in small
+instances. Approximately 34\% of annotated instances are under
+$32 \times 32$ pixels, which at $640 \times 640$ input resolution map to
+fewer than two pixels in the final feature map after 32$\times$ spatial
+downsampling. Tiling recovers these by preserving small objects at a
+representable scale within each processed tile.
+
+The WBF ensemble delivers the largest overall gain ($+$9.7\% mAP,
+reaching 0.718), reflecting genuine complementarity between the nano and
+medium model variants: the errors that are systematic for one tend not to
+be for the other.
+
+% ─── VI. DISCUSSION ──────────────────────────────────────────────────────────
+
+\section{Discussion}
+
+A few observations from running these experiments are worth noting beyond
+the headline numbers.
+
+The preprocessing pipeline's effect was larger than initially expected.
+CLAHE and grey world white balance together added 2.6 percentage points in
+mAP at essentially no additional cost. For a dataset with as much visual
+inconsistency as TrashCan---collected at different depths, by different
+vehicles, under varying ambient light---normalisation appears to matter
+considerably. The largest absolute gain was in the trash class
+($+$0.028 AP), consistent with the observation that plastic surfaces lose
+their discriminative red-channel gradients most severely under the
+blue-green colour shift characteristic of underwater imagery.
+
+The relationship between model scale and accuracy is approximately linear
+through the YOLOv8 family. There are no unexpected drops or sharp
+diminishing returns within the tested range, suggesting the dataset and
+training protocol are well-calibrated enough that adding capacity
+translates to better representations rather than being wasted on
+overfitting.
+
+Small-object detection is the primary structural challenge on TrashCan.
+The 34\% of instances under $32 \times 32$ pixels is not an artefact of
+the dataset; it reflects the typical scale of debris as seen by an AUV at
+operational distances. SAHI is effective at recovering these but
+approximately doubles inference time for a $640 \times 640$ image, since
+more tile passes are required. Whether this overhead is acceptable depends
+on whether the mission requires real-time response or can tolerate
+post-processing latency.
+
+The YOLO+SAM pipeline is worth noting separately. Average trash pixel
+coverage across the validation set was 8.3\% (median 4.1\%), with
+higher-coverage scenes corresponding to net or debris accumulations.
+SAM's zero-shot generalisation to underwater imagery holds up well in
+most cases, failing mainly on semi-transparent plastics where the boundary
+is genuinely ambiguous even in human annotation. The practical implication
+is that per-frame waste coverage estimation---how much debris is present,
+not just where---becomes available with no additional labelling effort,
+which has direct value for AUV collection mission planning.
+
+% ─── VII. CONCLUSION ─────────────────────────────────────────────────────────
+
+\section{Conclusion}
+
+This paper presented a comprehensive benchmark for underwater marine debris
+detection, combining dataset customisation, domain-specific preprocessing,
+and evaluation of six modern detection architectures on TrashCan 1.0.
+
+SAHI tiling is the most impactful single-model improvement, addressing the
+small-fragment detection problem that is structurally built into standard
+$640 \times 640$ inference. WBF ensembling of YOLOv8n and YOLOv8m achieves
+the best overall result at 0.718 mAP@0.5. For constrained AUV deployment,
+YOLOv11n at 155 FPS offers the most practical balance of speed and accuracy.
+CLAHE and grey world preprocessing is inexpensive and consistently
+beneficial. Domain augmentation contributes more to out-of-distribution
+robustness than to in-distribution accuracy, making its value
+deployment-context dependent.
+
+The YOLO+SAM pipeline demonstrates that pixel-level waste coverage
+estimation is achievable with zero annotation cost, enabling volumetric
+quantification for AUV mission planning. Future work will incorporate
+additional datasets (Trash-ICRA19, RUWI) to improve generalisation,
+explore knowledge distillation from larger to smaller models for edge
+deployment, and evaluate temporal detection consistency across AUV video
+streams rather than treating each frame independently.
+
+\section*{Acknowledgment}
+
+The author thanks the iRVLab group at the University of Minnesota for
+making the TrashCan 1.0 dataset publicly available, and Google Colab for
+providing the GPU resources used throughout all experiments.
+
+% ─── REFERENCES ──────────────────────────────────────────────────────────────
+
+\begin{thebibliography}{00}
+
+\bibitem{b1}
+``Advanced deep learning techniques for efficient detection and
+quantification of marine debris using customised data,''
+\textit{arXiv preprint arXiv:2305.16460}, Jan. 2023.
+
+\bibitem{b2}
+``Recent advances in underwater object detection,''
+\textit{arXiv preprint arXiv:2405.18299}, May 2024.
+
+\bibitem{b3}
+J. Hong, M. Fulton, and J. Sattar, ``TrashCan: A semantically-segmented
+dataset towards visual detection of marine debris,''
+\textit{arXiv preprint arXiv:2007.08097}, 2020.
+
+\bibitem{b4}
+G. Jocher, A. Chaurasia, and J. Qiu, ``Ultralytics YOLOv8,''
+GitHub, 2023.
+
+\bibitem{b5}
+Deci AI, ``YOLO-NAS: A foundation model for object detection,'' 2023.
+
+\bibitem{b6}
+A. Kirillov \textit{et al.}, ``Segment anything,''
+in \textit{Proc. IEEE/CVF Int. Conf. Comput. Vision (ICCV)},
+2023, pp. 4015--4026.
+
+\bibitem{b7}
+F. C. Akyon, S. O. Altinuc, and A. Temizel,
+``Slicing aided hyper inference and fine-tuning for small object
+detection,'' in \textit{Proc. IEEE Int. Conf. Image Process. (ICIP)},
+2022, pp. 966--970.
+
+\bibitem{b8}
+R. Solovyev, W. Wang, and T. Gabruseva,
+``Weighted boxes fusion: Ensembling boxes from different object detection
+models,'' \textit{Image Vis. Comput.}, vol. 107, p. 104117, 2021.
+
+\end{thebibliography}
+
+% ─── APPENDICES ──────────────────────────────────────────────────────────────
+
+\appendix
+
+\section{Training Hyperparameters}
+
+\begin{table}[H]
+\caption{YOLO Training Configuration}
+\label{tab:hyperparams}
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Optimizer (YOLO)       & AdamW \\
+Initial learning rate  & 0.001 \\
+LR schedule            & Cosine decay \\
+Final LR ratio         & 0.01 \\
+Epochs (YOLO / R-CNN)  & 100 / 15 \\
+Batch size (640 / 1280 px) & 16 / 4 \\
+Warmup epochs          & 3 \\
+Mosaic augmentation    & On (off in final 10 epochs) \\
+Mixup alpha            & 0.1 \\
+Weight decay           & 0.0005 \\
+Momentum               & 0.937 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+\section{Software Environment}
+
+\begin{table}[H]
+\caption{Software and Hardware Configuration}
+\label{tab:env}
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Component}     & \textbf{Version} \\
+\midrule
+Python                 & 3.10 \\
+PyTorch                & 2.1.0 (CUDA 11.8) \\
+ultralytics            & 8.2.x \\
+super-gradients        & 3.7.1 \\
+torchvision            & 0.16.0 \\
+segment-anything       & 1.0 \\
+sahi                   & 0.11.x \\
+GPU                    & NVIDIA T4 (Google Colab) \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+\end{document}

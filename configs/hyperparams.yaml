@@ -1,0 +1,37 @@
+# Training hyperparameters — YOLOv8 baseline
+
+model: yolov8n.pt          # starting checkpoint (n=nano, m=medium)
+epochs: 100
+imgsz: 640
+batch: 16                  # reduce to 8 if GPU OOM
+workers: 4
+device: 0                  # GPU index; use 'cpu' for testing
+
+# Optimizer
+optimizer: AdamW
+lr0: 0.001                 # initial learning rate
+lrf: 0.01                  # final lr = lr0 * lrf
+momentum: 0.937
+weight_decay: 0.0005
+warmup_epochs: 3
+
+# Augmentation (built-in ultralytics)
+hsv_h: 0.015
+hsv_s: 0.7
+hsv_v: 0.4
+degrees: 0.0
+translate: 0.1
+scale: 0.5
+flipud: 0.0
+fliplr: 0.5
+mosaic: 1.0
+mixup: 0.1
+
+# Evaluation
+conf: 0.25                 # confidence threshold
+iou: 0.45                  # NMS IoU threshold
+
+# Output
+project: results
+name: baseline
+save_period: 10            # save checkpoint every N epochs
